@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Flatulence Aurora</title>
+  <title>GIGAFART</title>
   <style>
     * {
       margin: 0;
@@ -15,7 +15,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #0a0a12;
+      background: #000;
     }
     
     #container {
@@ -27,23 +27,44 @@
       overflow: hidden;
     }
     
-    #canvas {
+    #bg-canvas {
       position: absolute;
       top: 0;
       left: 0;
-      z-index: 1;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
     }
     
-    .fart {
+    #fart {
       position: absolute;
-      pointer-events: none;
-      user-select: none;
+      font-size: 150px;
       line-height: 1;
+      user-select: none;
+      transition: filter 0.1s ease;
       z-index: 5;
     }
     
-    #label {
+    .particle {
       position: absolute;
+      pointer-events: none;
+      user-select: none;
+      opacity: 0.8;
+      z-index: 4;
+    }
+    
+    #corner-counter {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      color: rgba(255, 255, 255, 0.5);
+      font-family: monospace;
+      font-size: 14px;
+      z-index: 10;
+    }
+    
+    #label {
+      position: fixed;
       bottom: 20px;
       left: 20px;
       color: rgba(255, 255, 255, 0.3);
@@ -51,264 +72,385 @@
       font-size: 12px;
       z-index: 10;
     }
+
+    .corner-hit {
+      animation: cornerFlash 0.5s ease-out;
+    }
+
+    @keyframes cornerFlash {
+      0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.8); }
+      100% { box-shadow: 0 0 100px 50px rgba(255, 255, 255, 0); }
+    }
   </style>
 </head>
 <body>
   <div id="container">
-    <canvas id="canvas"></canvas>
-    <div id="label">~ flatulence aurora ~</div>
+    <canvas id="bg-canvas"></canvas>
+    <div id="fart">💨</div>
   </div>
+  <div id="corner-counter">corners hit: <span id="count">0</span></div>
 
   <script>
-    // Perlin noise implementation
-    class PerlinNoise {
-      constructor() {
-        this.permutation = [];
-        for (let i = 0; i < 256; i++) this.permutation[i] = i;
-        for (let i = 255; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [this.permutation[i], this.permutation[j]] = [this.permutation[j], this.permutation[i]];
-        }
-        this.p = [...this.permutation, ...this.permutation];
-      }
-
-      fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
-      lerp(a, b, t) { return a + t * (b - a); }
-      grad(hash, x, y) {
-        const h = hash & 3;
-        const u = h < 2 ? x : y;
-        const v = h < 2 ? y : x;
-        return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
-      }
-
-      noise(x, y) {
-        const X = Math.floor(x) & 255;
-        const Y = Math.floor(y) & 255;
-        x -= Math.floor(x);
-        y -= Math.floor(y);
-        const u = this.fade(x);
-        const v = this.fade(y);
-        const A = this.p[X] + Y, B = this.p[X + 1] + Y;
-        return this.lerp(
-          this.lerp(this.grad(this.p[A], x, y), this.grad(this.p[B], x - 1, y), u),
-          this.lerp(this.grad(this.p[A + 1], x, y - 1), this.grad(this.p[B + 1], x - 1, y - 1), u),
-          v
-        );
-      }
+    // ========== ANIMATED BACKGROUND ==========
+    const bgCanvas = document.getElementById('bg-canvas');
+    const bgCtx = bgCanvas.getContext('2d');
+    
+    function resizeBgCanvas() {
+      bgCanvas.width = window.innerWidth;
+      bgCanvas.height = window.innerHeight;
     }
-
-    // Color palette for glows
-    const GLOW_COLORS = [
-      'rgba(144, 238, 144, 0.8)',
-      'rgba(85, 107, 47, 0.8)',
-      'rgba(154, 205, 50, 0.8)',
-      'rgba(107, 142, 35, 0.8)',
-      'rgba(139, 119, 101, 0.8)',
-      'rgba(160, 82, 45, 0.8)',
-      'rgba(222, 184, 135, 0.8)',
-      'rgba(245, 245, 245, 0.8)',
-      'rgba(176, 196, 172, 0.8)',
+    resizeBgCanvas();
+    
+    // Dark color palettes for each layer (lightened)
+    const darkPalettes = [
+      // Layer 1: Deep purples and blues
+      [
+        { r: 35, g: 25, b: 60 },
+        { r: 50, g: 35, b: 80 },
+        { r: 25, g: 40, b: 70 },
+        { r: 45, g: 25, b: 75 },
+      ],
+      // Layer 2: Dark teals and greens
+      [
+        { r: 20, g: 50, b: 50 },
+        { r: 28, g: 60, b: 55 },
+        { r: 15, g: 45, b: 48 },
+        { r: 35, g: 55, b: 45 },
+      ],
+      // Layer 3: Deep browns and maroons
+      [
+        { r: 60, g: 35, b: 35 },
+        { r: 50, g: 30, b: 42 },
+        { r: 70, g: 40, b: 30 },
+        { r: 55, g: 28, b: 45 },
+      ],
     ];
-
-    const container = document.getElementById('container');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-
-    let width = window.innerWidth;
-    let height = window.innerHeight;
-    canvas.width = width;
-    canvas.height = height;
-
-    const perlin = new PerlinNoise();
-    const particles = [];
-    const trails = [];
-    let time = 0;
-
-    const noiseScale = 0.002;
-    const flowStrength = 3.0;
-
-    function rgbFromGlow(colorStr) {
-      const match = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-      return match ? [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])] : [150, 150, 150];
-    }
-
-    function createParticle() {
-      const element = document.createElement('div');
-      element.className = 'fart';
-      element.innerHTML = '💨';
-      
-      const size = 72 + Math.random() * 108;
-      element.style.fontSize = size + 'px';
-      
-      const particle = {
-        element: element,
-        x: Math.random() * width,
-        y: Math.random() * height,
-        speed: 1.2 + Math.random() * 3.5,
-        size: size,
-        colorIndex: Math.floor(Math.random() * GLOW_COLORS.length),
-        alpha: 0.5 + Math.random() * 0.4,
-        rotation: Math.random() * 360,
-        rotationSpeed: (Math.random() - 0.5) * 1.5,
-        life: 1,
-        decay: 0.0002 + Math.random() * 0.0005,
-        noiseOffsetX: Math.random() * 1000,
-        noiseOffsetY: Math.random() * 1000,
-        wobble: Math.random() * Math.PI * 2,
-        wobbleSpeed: 0.015 + Math.random() * 0.025,
+    
+    // Layer configurations
+    const layers = [
+      { angle: 0, angleSpeed: 0.0003, colorIndex: 0, colorProgress: 0, colorSpeed: 0.002, opacity: 1.0 },
+      { angle: 2.1, angleSpeed: -0.0005, colorIndex: 0, colorProgress: 0, colorSpeed: 0.0015, opacity: 0.7 },
+      { angle: 4.2, angleSpeed: 0.0004, colorIndex: 0, colorProgress: 0, colorSpeed: 0.0025, opacity: 0.5 },
+    ];
+    
+    function lerpColor(c1, c2, t) {
+      return {
+        r: Math.round(c1.r + (c2.r - c1.r) * t),
+        g: Math.round(c1.g + (c2.g - c1.g) * t),
+        b: Math.round(c1.b + (c2.b - c1.b) * t),
       };
+    }
+    
+    function drawGradientLayer(layer, paletteIndex) {
+      const palette = darkPalettes[paletteIndex];
+      const w = bgCanvas.width;
+      const h = bgCanvas.height;
       
-      container.appendChild(element);
-      return particle;
+      // Get current interpolated colors
+      const idx1 = Math.floor(layer.colorIndex) % palette.length;
+      const idx2 = (idx1 + 1) % palette.length;
+      const idx3 = (idx1 + 2) % palette.length;
+      const idx4 = (idx1 + 3) % palette.length;
+      
+      const t = layer.colorProgress;
+      const color1 = lerpColor(palette[idx1], palette[idx2], t);
+      const color2 = lerpColor(palette[idx2], palette[idx3], t);
+      
+      // Calculate gradient endpoints based on angle
+      const cx = w / 2;
+      const cy = h / 2;
+      const radius = Math.sqrt(w * w + h * h) / 2;
+      
+      const x1 = cx + Math.cos(layer.angle) * radius;
+      const y1 = cy + Math.sin(layer.angle) * radius;
+      const x2 = cx + Math.cos(layer.angle + Math.PI) * radius;
+      const y2 = cy + Math.sin(layer.angle + Math.PI) * radius;
+      
+      const gradient = bgCtx.createLinearGradient(x1, y1, x2, y2);
+      gradient.addColorStop(0, `rgba(${color1.r}, ${color1.g}, ${color1.b}, ${layer.opacity})`);
+      gradient.addColorStop(0.5, `rgba(${color2.r}, ${color2.g}, ${color2.b}, ${layer.opacity * 0.8})`);
+      gradient.addColorStop(1, `rgba(${color1.r}, ${color1.g}, ${color1.b}, ${layer.opacity})`);
+      
+      bgCtx.fillStyle = gradient;
+      bgCtx.fillRect(0, 0, w, h);
     }
-
-    function resetParticle(p) {
-      p.x = Math.random() * width;
-      p.y = Math.random() * height;
-      p.life = 1;
-      p.alpha = 0.5 + Math.random() * 0.4;
-      p.noiseOffsetX = Math.random() * 1000;
-      p.noiseOffsetY = Math.random() * 1000;
+    
+    function drawRadialLayer(time) {
+      const w = bgCanvas.width;
+      const h = bgCanvas.height;
+      
+      // Slowly moving center
+      const cx = w / 2 + Math.sin(time * 0.0002) * w * 0.2;
+      const cy = h / 2 + Math.cos(time * 0.00015) * h * 0.2;
+      const radius = Math.max(w, h) * 0.8;
+      
+      const t = (Math.sin(time * 0.0008) + 1) / 2;
+      const innerColor = lerpColor({ r: 45, g: 40, b: 70 }, { r: 35, g: 55, b: 50 }, t);
+      const outerColor = lerpColor({ r: 15, g: 15, b: 28 }, { r: 20, g: 15, b: 35 }, t);
+      
+      const gradient = bgCtx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      gradient.addColorStop(0, `rgba(${innerColor.r}, ${innerColor.g}, ${innerColor.b}, 0.7)`);
+      gradient.addColorStop(0.6, `rgba(${outerColor.r}, ${outerColor.g}, ${outerColor.b}, 0.4)`);
+      gradient.addColorStop(1, `rgba(${outerColor.r}, ${outerColor.g}, ${outerColor.b}, 0.1)`);
+      
+      bgCtx.fillStyle = gradient;
+      bgCtx.fillRect(0, 0, w, h);
     }
-
-    // Initialize particles
-    const particleCount = Math.min(50, Math.floor((width * height) / 30000));
-    for (let i = 0; i < particleCount; i++) {
-      particles.push(createParticle());
-    }
-
-    function drawBackground() {
-      // Base gradient
-      const gradient = ctx.createLinearGradient(0, 0, 0, height);
-      gradient.addColorStop(0, '#0a0a12');
-      gradient.addColorStop(0.3, '#1a1a2e');
-      gradient.addColorStop(0.6, '#16213e');
-      gradient.addColorStop(1, '#0f0f1a');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, width, height);
-
-      // Aurora waves
-      const waveColors = [
-        [144, 238, 144],
-        [85, 107, 47],
-        [154, 205, 50],
-        [139, 119, 101],
-        [176, 196, 172],
-      ];
-
-      for (let i = 0; i < 5; i++) {
-        ctx.beginPath();
-        ctx.moveTo(0, height * 0.3);
+    
+    let bgTime = 0;
+    
+    function animateBackground() {
+      bgTime++;
+      
+      // Base layer - solid dark
+      bgCtx.fillStyle = '#121218';
+      bgCtx.fillRect(0, 0, bgCanvas.width, bgCanvas.height);
+      
+      // Update and draw gradient layers
+      layers.forEach((layer, i) => {
+        layer.angle += layer.angleSpeed;
+        layer.colorProgress += layer.colorSpeed;
         
-        for (let x = 0; x <= width; x += 10) {
-          const y = height * 0.3 + 
-            Math.sin(x * 0.005 + time * 0.001 + i) * 50 +
-            Math.sin(x * 0.002 + time * 0.0005) * 100 +
-            perlin.noise(x * 0.003, time * 0.0002 + i) * 80;
-          ctx.lineTo(x, y);
+        if (layer.colorProgress >= 1) {
+          layer.colorProgress = 0;
+          layer.colorIndex = (layer.colorIndex + 1) % darkPalettes[i].length;
         }
         
-        ctx.lineTo(width, height);
-        ctx.lineTo(0, height);
-        ctx.closePath();
-        
-        const color = waveColors[i % waveColors.length];
-        const waveGradient = ctx.createLinearGradient(0, height * 0.2, 0, height * 0.8);
-        waveGradient.addColorStop(0, `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.03)`);
-        waveGradient.addColorStop(0.5, `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.07)`);
-        waveGradient.addColorStop(1, 'transparent');
-        ctx.fillStyle = waveGradient;
-        ctx.fill();
-      }
-
-      // Draw trails
-      for (let i = trails.length - 1; i >= 0; i--) {
-        const trail = trails[i];
-        trail.alpha -= 0.015;
-        trail.size *= 0.98;
-        
-        if (trail.alpha <= 0) {
-          trails.splice(i, 1);
-        } else {
-          ctx.beginPath();
-          ctx.arc(trail.x, trail.y, trail.size, 0, Math.PI * 2);
-          const [r, g, b] = trail.rgb;
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${trail.alpha * 0.4})`;
-          ctx.fill();
-        }
-      }
-    }
-
-    function animate() {
-      time++;
-      
-      drawBackground();
-      
-      particles.forEach(p => {
-        const noiseVal = perlin.noise(
-          (p.x + p.noiseOffsetX) * noiseScale,
-          (p.y + p.noiseOffsetY) * noiseScale + time * 0.0001
-        );
-        
-        const angle = noiseVal * Math.PI * 4;
-        
-        p.wobble += p.wobbleSpeed;
-        const wobbleX = Math.sin(p.wobble) * 1.0;
-        const wobbleY = Math.cos(p.wobble * 0.7) * 0.6;
-        
-        const oldX = p.x;
-        const oldY = p.y;
-        
-        p.x += (Math.cos(angle) * p.speed * flowStrength + wobbleX);
-        p.y += (Math.sin(angle) * p.speed * flowStrength + wobbleY - 0.6);
-        
-        p.rotation += p.rotationSpeed;
-        p.life -= p.decay;
-        
-        // Add trail
-        if (Math.random() > 0.6) {
-          trails.push({
-            x: oldX + p.size * 0.4,
-            y: oldY + p.size * 0.4,
-            size: p.size * 0.2,
-            alpha: 0.5,
-            rgb: rgbFromGlow(GLOW_COLORS[p.colorIndex]),
-          });
-          
-          if (trails.length > 200) {
-            trails.shift();
-          }
-        }
-        
-        // Wrap around
-        if (p.x < -200) p.x = width + 200;
-        if (p.x > width + 200) p.x = -200;
-        if (p.y < -200) p.y = height + 200;
-        if (p.y > height + 200) p.y = -200;
-        
-        if (p.life <= 0) resetParticle(p);
-        
-        // Update DOM element
-        const pulse = 0.85 + Math.sin(time * 0.002 + p.noiseOffsetX) * 0.15;
-        const currentAlpha = p.alpha * p.life * pulse;
-        const glowSize = 25 + Math.sin(time * 0.003 + p.noiseOffsetY) * 12;
-        
-        p.element.style.transform = `translate(${p.x}px, ${p.y}px) rotate(${p.rotation}deg)`;
-        p.element.style.opacity = currentAlpha;
-        p.element.style.filter = `drop-shadow(0 0 ${glowSize}px ${GLOW_COLORS[p.colorIndex]}) drop-shadow(0 0 ${glowSize * 2}px ${GLOW_COLORS[p.colorIndex]})`;
+        drawGradientLayer(layer, i);
       });
       
-      requestAnimationFrame(animate);
+      // Radial overlay
+      drawRadialLayer(bgTime);
     }
-
+    
+    // ========== MAIN FART ANIMATION ==========
+    const fart = document.getElementById('fart');
+    const countDisplay = document.getElementById('count');
+    const container = document.getElementById('container');
+    
+    // Colors that cycle on bounce
+    const colors = [
+      'hue-rotate(0deg) saturate(1.5) brightness(1.2)',      // original
+      'hue-rotate(60deg) saturate(2) brightness(1.3)',       // yellow-green
+      'hue-rotate(120deg) saturate(2) brightness(1.2)',      // green-cyan
+      'hue-rotate(180deg) saturate(2) brightness(1.2)',      // cyan-blue
+      'hue-rotate(240deg) saturate(2) brightness(1.3)',      // blue-purple
+      'hue-rotate(300deg) saturate(2) brightness(1.2)',      // purple-pink
+      'hue-rotate(30deg) saturate(2.5) brightness(1.4)',     // orange
+      'hue-rotate(330deg) saturate(2) brightness(1.3)',      // pink-red
+    ];
+    
+    // Particle colors
+    const particleColors = [
+      '#90EE90', '#9ACD32', '#6B8E23', '#8B7765', 
+      '#D2B48C', '#F5F5F5', '#B0C4AC', '#7CFC00'
+    ];
+    
+    let colorIndex = 0;
+    let cornerHits = 0;
+    let rotation = 0;
+    const rotationSpeed = 0.5;
+    
+    // Particle system
+    const particles = [];
+    
+    // Position and velocity
+    let x = Math.random() * (window.innerWidth - 200);
+    let y = Math.random() * (window.innerHeight - 200);
+    let vx = 3 * (Math.random() > 0.5 ? 1 : -1);
+    let vy = 3 * (Math.random() > 0.5 ? 1 : -1);
+    
+    // Get fart dimensions
+    let fartWidth = 150;
+    let fartHeight = 150;
+    
+    function updateDimensions() {
+      const rect = fart.getBoundingClientRect();
+      fartWidth = rect.width || 150;
+      fartHeight = rect.height || 150;
+    }
+    
+    setTimeout(updateDimensions, 100);
+    
+    function changeColor() {
+      colorIndex = (colorIndex + 1) % colors.length;
+      fart.style.filter = colors[colorIndex] + ` drop-shadow(0 0 30px currentColor)`;
+    }
+    
+    function createParticle(originX, originY, directionX, directionY) {
+      const particle = document.createElement('div');
+      particle.className = 'particle';
+      particle.innerHTML = '💨';
+      
+      const size = 20 + Math.random() * 40;
+      particle.style.fontSize = size + 'px';
+      particle.style.left = '0px';
+      particle.style.top = '0px';
+      
+      const color = particleColors[Math.floor(Math.random() * particleColors.length)];
+      particle.style.filter = `drop-shadow(0 0 10px ${color})`;
+      
+      container.appendChild(particle);
+      
+      // Particle velocity - spray away from wall
+      const speed = 2 + Math.random() * 4;
+      const spread = (Math.random() - 0.5) * 3;
+      
+      const pVx = directionX * speed + (directionY !== 0 ? spread : 0);
+      const pVy = directionY * speed + (directionX !== 0 ? spread : 0);
+      
+      particles.push({
+        element: particle,
+        x: originX,
+        y: originY,
+        vx: pVx,
+        vy: pVy,
+        life: 1,
+        decay: 0.015 + Math.random() * 0.01,
+        rotation: Math.random() * 360,
+        rotationSpeed: (Math.random() - 0.5) * 10,
+        scale: 1,
+      });
+    }
+    
+    function spawnParticleBurst(hitX, hitY, dirX, dirY) {
+      // Spawn from the back of the fart (opposite to direction of travel)
+      const centerX = x + fartWidth / 2;
+      const centerY = y + fartHeight / 2;
+      
+      // Offset spawn point to be behind the fart
+      const spawnX = centerX - dirX * 40;
+      const spawnY = centerY - dirY * 40;
+      
+      const count = 8 + Math.floor(Math.random() * 6);
+      for (let i = 0; i < count; i++) {
+        createParticle(spawnX, spawnY, -dirX, -dirY);
+      }
+    }
+    
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vx *= 0.98;
+        p.vy *= 0.98;
+        p.life -= p.decay;
+        p.rotation += p.rotationSpeed;
+        p.scale *= 0.99;
+        
+        if (p.life <= 0) {
+          p.element.remove();
+          particles.splice(i, 1);
+        } else {
+          p.element.style.transform = `translate(${p.x}px, ${p.y}px) rotate(${p.rotation}deg) scale(${p.scale})`;
+          p.element.style.opacity = p.life * 0.8;
+        }
+      }
+    }
+    
+    function flashCorner() {
+      cornerHits++;
+      countDisplay.textContent = cornerHits;
+      
+      // Screen flash effect - use a temporary overlay
+      const flash = document.createElement('div');
+      flash.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.3);
+        pointer-events: none;
+        z-index: 100;
+      `;
+      document.body.appendChild(flash);
+      setTimeout(() => flash.remove(), 100);
+    }
+    
+    function animate() {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      
+      // Update rotation
+      rotation += rotationSpeed;
+      
+      // Update position
+      x += vx;
+      y += vy;
+      
+      let hitX = false;
+      let hitY = false;
+      let dirX = 0;
+      let dirY = 0;
+      
+      // Bounce off walls
+      if (x <= 0) {
+        x = 0;
+        vx = Math.abs(vx);
+        hitX = true;
+        dirX = 1;
+        changeColor();
+      } else if (x + fartWidth >= width) {
+        x = width - fartWidth;
+        vx = -Math.abs(vx);
+        hitX = true;
+        dirX = -1;
+        changeColor();
+      }
+      
+      if (y <= 0) {
+        y = 0;
+        vy = Math.abs(vy);
+        hitY = true;
+        dirY = 1;
+        changeColor();
+      } else if (y + fartHeight >= height) {
+        y = height - fartHeight;
+        vy = -Math.abs(vy);
+        hitY = true;
+        dirY = -1;
+        changeColor();
+      }
+      
+      // Spawn particles on wall hit
+      if (hitX || hitY) {
+        spawnParticleBurst(hitX, hitY, dirX, dirY);
+      }
+      
+      // Corner hit!
+      if (hitX && hitY) {
+        flashCorner();
+        // Extra particles for corner hit
+        for (let i = 0; i < 3; i++) {
+          setTimeout(() => spawnParticleBurst(hitX, hitY, dirX, dirY), i * 50);
+        }
+      }
+      
+      // Update particles
+      updateParticles();
+      
+      // Apply position and rotation
+      fart.style.transform = `translate(${x}px, ${y}px) rotate(${rotation}deg)`;
+    }
+    
+    function mainLoop() {
+      animateBackground();
+      animate();
+      requestAnimationFrame(mainLoop);
+    }
+    
+    // Initialize color
+    fart.style.filter = colors[colorIndex] + ` drop-shadow(0 0 30px currentColor)`;
+    
     window.addEventListener('resize', () => {
-      width = window.innerWidth;
-      height = window.innerHeight;
-      canvas.width = width;
-      canvas.height = height;
+      updateDimensions();
+      resizeBgCanvas();
     });
-
-    animate();
+    
+    mainLoop();
   </script>
 </body>
 </html>
